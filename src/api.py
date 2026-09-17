@@ -1,3 +1,4 @@
+import json
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -6,8 +7,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from src.auth import create_access_token, get_current_user, hash_password, verify_password
 from src.database import Base, engine, get_db
-from src.models import Ticket, User
-from src.schemas import LoginRequest, RegisterRequest, TicketCreate, TicketResponse, TokenResponse, UserResponse
+from src.decision import DecisionServiceError, create_decision
+from src.models import Decision, Ticket, User
+from src.schemas import DecisionResponse, LoginRequest, RegisterRequest, TicketCreate, TicketResponse, TokenResponse, UserResponse
 
 
 @asynccontextmanager
@@ -17,6 +19,30 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Support Ticket Decision API", version="0.1.0", lifespan=lifespan)
+
+
+def serialize_ticket(ticket: Ticket) -> TicketResponse:
+    decision = None
+    if ticket.decision:
+        decision = DecisionResponse(
+            action=ticket.decision.action,
+            reason=ticket.decision.reason,
+            confidence=ticket.decision.confidence,
+            sources=json.loads(ticket.decision.sources),
+            created_at=ticket.decision.created_at,
+        )
+    return TicketResponse(
+        id=ticket.id,
+        message=ticket.message,
+        order_value_inr=ticket.order_value_inr,
+        days_since_delivery=ticket.days_since_delivery,
+        days_since_dispatch=ticket.days_since_dispatch,
+        product_type=ticket.product_type,
+        opened_status=ticket.opened_status,
+        order_status=ticket.order_status,
+        created_at=ticket.created_at,
+        decision=decision,
+    )
 
 
 @app.get("/health")
@@ -51,9 +77,34 @@ def get_me(current_user: User = Depends(get_current_user)):
 
 @app.get("/tickets", response_model=list[TicketResponse])
 def list_tickets(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    return db.scalars(
+    tickets = db.scalars(
         select(Ticket).where(Ticket.user_id == current_user.id).options(selectinload(Ticket.decision)).order_by(Ticket.created_at.desc())
     ).all()
+    return [serialize_ticket(ticket) for ticket in tickets]
+
+
+@app.post("/tickets", response_model=TicketResponse, status_code=status.HTTP_201_CREATED)
+def create_ticket(payload: TicketCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    try:
+        generated_decision = create_decision(payload)
+    except DecisionServiceError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    ticket = Ticket(user_id=current_user.id, **payload.model_dump())
+    db.add(ticket)
+    db.flush()
+    db.add(
+        Decision(
+            ticket_id=ticket.id,
+            action=generated_decision.action,
+            reason=generated_decision.reason,
+            confidence=generated_decision.confidence,
+            sources=json.dumps(generated_decision.sources),
+        )
+    )
+    db.commit()
+    ticket = db.scalar(select(Ticket).where(Ticket.id == ticket.id).options(selectinload(Ticket.decision)))
+    return serialize_ticket(ticket)
 
 
 @app.get("/tickets/{ticket_id}", response_model=TicketResponse)
@@ -63,4 +114,4 @@ def get_ticket(ticket_id: int, current_user: User = Depends(get_current_user), d
     )
     if ticket is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticket not found")
-    return ticket
+    return serialize_ticket(ticket)
