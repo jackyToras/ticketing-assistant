@@ -3,7 +3,8 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.cache/
 support_assistant.db
+test_support_assistant.db
 *.sqlite3
 .streamlit/secrets.toml
-
