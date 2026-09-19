@@ -10,7 +10,6 @@ An evidence-backed support-ticket decision assistant.
 - Local RAG over the supplied Markdown policies using Gemini embeddings and cosine similarity.
 - Gemini structured output validated by Pydantic before persistence.
 - Streamlit login, new-decision, and history interface that communicates only through HTTP.
-- Pytest authorization/persistence tests and a supplied-case evaluation runner.
 
 ## Tech Stack
 
