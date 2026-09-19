@@ -29,7 +29,11 @@ All generated code was reviewed and adapted during implementation. The API was t
 
 ## Key Engineering Decisions
 
-- SQLite keeps the intentionally small assignment local and simple.
-- Local JSON-cached Gemini embeddings plus NumPy cosine similarity provide RAG without a hosted vector database.
-- Gemini receives only the incoming ticket and retrieved policy evidence, and its response is constrained to a validated schema.
-- Missing information is explicitly directed to produce `NEEDS_MORE_INFORMATION` instead of a guessed decision.
+1. **RAG over CAG:** Retrieve only top-4 most relevant policy chunks (via cosine similarity) instead of sending all policies to Gemini. This reduces token use, improves latency, and makes decisions explainable.
+
+2. **JWT + per-ticket authorization:** Stateless authentication with ownership checks. Returns 404 (not 403) on cross-user access to avoid leaking ticket existence.
+
+3. **Pydantic schema + source validation:** Gemini's JSON response is validated against a schema (ensures valid action, confidence 0–1, reason length). Sources are checked against retrieved chunks—if Gemini cites a policy not in the retrieval results, the decision is rejected (prevents hallucination).
+
+4. **Streamlit as thin client:** The UI never touches the database or manages embeddings. All business logic lives in FastAPI. This keeps deployment simple and authorization centralized at the API layer.
+
